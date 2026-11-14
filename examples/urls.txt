@@ -1,0 +1,5 @@
+# One URL per line. Blank lines and comments are ignored.
+https://www.example.com/
+https://www.example.com/blog/post
+https://www.example.com/products/widget?color=blue
+https://www.example.com/old-page

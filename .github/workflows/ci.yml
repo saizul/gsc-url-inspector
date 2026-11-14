@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+      - name: Ruff
+        run: |
+          ruff check .
+          ruff format --check .
+
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+      - name: Test
+        run: pytest
+      - name: CLI smoke test
+        run: |
+          gsc-url-inspector --version
+          gsc-url-inspector inspect --site https://www.example.com/ --sitemap examples/sitemap.xml --dry-run --db smoke.sqlite
+          gsc-url-inspector inspect --site sc-domain:example.com -i examples/urls.csv -i examples/urls.txt --dry-run \
+            --db smoke.sqlite
+          # Inspecting without credentials must fail with the usage exit code (2).
+          set +e
+          gsc-url-inspector inspect --site https://www.example.com/ https://www.example.com/ --db smoke.sqlite
+          code=$?
+          set -e
+          test "$code" -eq 2
+          python examples/library_usage.py
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t gsc-url-inspector:ci .
+      - run: >
+          docker run --rm -v "$PWD/examples:/work:ro" gsc-url-inspector:ci
+          inspect --site https://www.example.com/ --sitemap sitemap.xml --dry-run

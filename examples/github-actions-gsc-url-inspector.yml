@@ -1,0 +1,48 @@
+# Weekly URL Inspection run in GitHub Actions.
+#
+# Store the service account key (JSON) in the repository secret GSC_SERVICE_ACCOUNT and add the service account's
+# e-mail address as a user of the Search Console property. The SQLite state file is kept in the Actions cache so
+# each run is compared with the previous one and a paused run is resumed.
+name: URL inspection
+
+on:
+  schedule:
+    - cron: "30 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "gsc-url-inspector @ git+https://github.com/saizul/gsc-url-inspector"
+      - uses: actions/cache@v4
+        with:
+          path: gsc-inspections.sqlite
+          key: gsc-state-${{ github.run_id }}
+          restore-keys: gsc-state-
+      - name: Inspect
+        env:
+          GSC_SERVICE_ACCOUNT: ${{ secrets.GSC_SERVICE_ACCOUNT }}
+        run: |
+          umask 077
+          printf '%s' "$GSC_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
+          gsc-url-inspector inspect --credentials "$RUNNER_TEMP/sa.json" \
+            --site https://www.example.com/ \
+            --sitemap https://www.example.com/sitemap.xml \
+            --quiet --format markdown --output report.md --report-dir reports \
+            --fail-on newly-not-indexed || code=$?
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+          rm -f "$RUNNER_TEMP/sa.json"
+          # 3 = paused at the daily quota; the next run resumes it.
+          if [ "${code:-0}" -ne 0 ] && [ "${code:-0}" -ne 3 ]; then exit "$code"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: url-inspection-reports
+          path: reports/

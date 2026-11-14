@@ -1,0 +1,49 @@
+{
+  "inspectionResult": {
+    "inspectionResultLink": "https://search.google.com/search-console/inspect?resource_id=https://www.example.com/&id=EXAMPLE",
+    "indexStatusResult": {
+      "verdict": "PASS",
+      "coverageState": "Submitted and indexed",
+      "robotsTxtState": "ALLOWED",
+      "indexingState": "INDEXING_ALLOWED",
+      "lastCrawlTime": "2026-11-10T08:15:42Z",
+      "pageFetchState": "SUCCESSFUL",
+      "googleCanonical": "https://www.example.com/blog/post",
+      "userCanonical": "https://www.example.com/blog/post",
+      "sitemap": ["https://www.example.com/sitemap.xml"],
+      "referringUrls": ["https://www.example.com/blog/"],
+      "crawledAs": "MOBILE"
+    },
+    "mobileUsabilityResult": {
+      "verdict": "PASS"
+    },
+    "richResultsResult": {
+      "verdict": "PASS",
+      "detectedItems": [
+        {
+          "richResultType": "Breadcrumbs",
+          "items": [{"name": "Unnamed item"}]
+        },
+        {
+          "richResultType": "FAQ",
+          "items": [
+            {
+              "name": "Unnamed item",
+              "issues": [{"issueMessage": "Missing field \"acceptedAnswer\"", "severity": "WARNING"}]
+            }
+          ]
+        }
+      ]
+    },
+    "ampResult": {
+      "verdict": "PASS",
+      "ampUrl": "https://www.example.com/blog/post/amp",
+      "robotsTxtState": "ALLOWED",
+      "indexingState": "AMP_INDEXING_ALLOWED",
+      "ampIndexStatusVerdict": "PASS",
+      "lastCrawlTime": "2026-11-09T21:03:11Z",
+      "pageFetchState": "SUCCESSFUL",
+      "issues": [{"issueMessage": "Custom JavaScript is not allowed", "severity": "WARNING"}]
+    }
+  }
+}
