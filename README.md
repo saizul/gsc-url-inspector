@@ -43,6 +43,7 @@ Changes since run 4: newly not indexed 12, newly indexed 30, Google canonical ch
 - [Authentication](#authentication)
 - [Usage](#usage)
 - [Quota and resumable runs](#quota-and-resumable-runs)
+- [Reusing fresh results and inspection order](#reusing-fresh-results-and-inspection-order)
 - [What is parsed](#what-is-parsed)
 - [Reports](#reports)
 - [Diffs](#diffs)
@@ -74,6 +75,9 @@ Changes since run 4: newly not indexed 12, newly indexed 30, Google canonical ch
   `Retry-After` or exponential backoff; a per-day quota error pauses the run.
 - **Resumable runs**: every result is committed to SQLite as it arrives. Rerun the same command and an unfinished
   run continues with the URLs that have no result yet. `--retry-errors` re-inspects failed URLs; `Ctrl-C` pauses.
+- **Budget planning**: `--reuse-within 7d` copies results younger than a week from earlier runs instead of inspecting
+  those URLs again, and `--order stale-first` or `--order not-indexed-first` spends the daily budget on
+  never-inspected, long-unchecked or problem URLs first.
 - **The full inspection result**: index verdict, coverage state, robots.txt state, indexing state, page fetch state,
   last crawl time, crawled-as user agent, Google-selected and user-declared canonical, sitemaps, referring URLs, rich
   results (types, items, issues), AMP (URL, verdict, indexing state, issues) and the deprecated mobile usability section
@@ -194,6 +198,8 @@ Main `inspect` options:
 | `--new-run` | start a new run even if an unfinished one exists |
 | `--retry-errors` | inspect URLs that failed in the current run again |
 | `--max-requests N` | stop after N URLs in this invocation (the run stays resumable) |
+| `--reuse-within AGE` | reuse results from earlier runs younger than `AGE` (`30m`, `12h`, `7d`, `2w`; a bare number is days) |
+| `--order` | inspection order of pending URLs: `source` (default), `stale-first` or `not-indexed-first` |
 | `--daily-limit N`, `--per-minute N` | budget for this property (defaults 2000 and 600) |
 | `--language` | BCP-47 code for translated issue messages (the API default is `en-US`) |
 | `--format`, `-o`, `--report-dir` | report on stdout or to a file, and the four report files to a directory |
@@ -223,6 +229,40 @@ therefore covered in five days without any extra logic (see `examples/daily-cron
 over, for example for a weekly comparison.
 
 Lower `--daily-limit` to keep part of the budget for people using the Search Console UI or other tools.
+
+## Reusing fresh results and inspection order
+
+With more URLs than the daily budget, a fresh `--new-run` would spend its first days on pages that were checked a
+moment ago. Two options make the budget go further:
+
+```bash
+# Weekly full report: reuse anything inspected in the last 7 days, inspect the rest, oldest checks first
+gsc-url-inspector inspect -s sc-domain:example.com --sitemap https://www.example.com/sitemap.xml \
+  --new-run --reuse-within 7d --order stale-first --report-dir reports
+
+# See the plan first: the URLs that would be inspected, in order, and how many results would be reused
+gsc-url-inspector inspect -s sc-domain:example.com -i urls.txt --dry-run --reuse-within 7d --order stale-first
+```
+
+`--reuse-within AGE` looks up the last **successful** inspection of every pending URL in all stored runs of the
+property. When it is younger than `AGE`, the stored result is copied into the current run with its original
+`inspected_at` time, so the URL counts as done, appears in every report and costs no quota. Failed inspections are
+never reused, and results that were themselves copied are not used as a source, so the age is always that of a real
+inspection. The option works for new and resumed runs alike; a later real inspection of the URL (for example with
+`--retry-errors`) replaces the copy.
+
+`--order` only changes the order in which pending URLs are sent; reports and the `run_urls` table keep the source
+order.
+
+| Order | URLs first |
+| --- | --- |
+| `source` | the order of the sources (default) |
+| `stale-first` | never successfully inspected, then the oldest last inspection |
+| `not-indexed-first` | not indexed or failed last time, then never inspected, then indexed; oldest first in each group |
+
+Copied rows are marked in the `carried_from` column of the `results` table (the id of the run that really inspected
+the URL). Databases from 0.1.0 are upgraded in place the first time they are opened (schema version 2); 0.1.0 itself
+refuses to open an upgraded database.
 
 ## What is parsed
 
@@ -295,7 +335,7 @@ dropped out of the index. `newly_not_indexed` and `google_canonical_changed` are
 | `GSC_URL_INSPECTOR_CACHE` | token cache directory (default `$XDG_CACHE_HOME/gsc-url-inspector` or `~/.cache/gsc-url-inspector`) |
 
 The state database holds four tables: `runs`, `run_urls` (the planned URL list of each run), `results` (key fields
-plus the raw JSON) and `quota_usage`. It is plain SQLite, so you can query it directly:
+plus the raw JSON and, for reused results, `carried_from`) and `quota_usage`. It is plain SQLite, so you can query it directly:
 
 ```sql
 SELECT coverage_state, COUNT(*) FROM results WHERE run_id = 3 GROUP BY 1 ORDER BY 2 DESC;

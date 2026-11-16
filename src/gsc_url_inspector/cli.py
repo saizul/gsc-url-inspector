@@ -22,6 +22,7 @@ from .client import InspectionClient
 from .diff import RunDiff, diff_records
 from .http import Transport, UrllibTransport
 from .models import InspectionRecord
+from .planning import ORDERS, order_urls, parse_age, split_fresh
 from .property import Property, PropertyError
 from .quota import SITE_QPD, SITE_QPM, QuotaLimiter, next_reset
 from .report import EXTENSIONS, FORMATS, render
@@ -123,6 +124,13 @@ def _fail_on_triggered(choices: Sequence[str], records: list[InspectionRecord], 
     return hits
 
 
+def _parse_age_arg(value: str):  # type: ignore[no-untyped-def]
+    try:
+        return parse_age(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def _parse_fail_on(value: str) -> list[str]:
     items = [v.strip() for v in value.split(",") if v.strip()]
     for item in items:
@@ -154,9 +162,17 @@ def cmd_inspect(args: argparse.Namespace, transport: Transport, stdin: TextIO, s
             raise CliError("no URLs given: use URL arguments, -i FILE, --sitemap URL or pipe URLs on stdin")
         if args.dry_run:
             inside = [u for u in urls if prop.contains(u)]
+            outside_count = len(urls) - len(inside)
+            note = ""
+            if args.reuse_within is not None or args.order != "source":
+                history = store.url_history(prop.site_url)
+                if args.reuse_within is not None:
+                    inside, fresh = split_fresh(inside, history, args.reuse_within)
+                    note = f" to inspect, {len(fresh)} with a fresh result to reuse"
+                inside = order_urls(inside, history, args.order)
             for u in inside:
                 stdout.write(u + "\n")
-            print(f"{len(inside)} URL(s) inside {prop}, {len(urls) - len(inside)} outside", file=stderr)
+            print(f"{len(inside)} URL(s) inside {prop}{note}, {outside_count} outside", file=stderr)
             return EXIT_OK
         creds = make_credentials(args, transport)
         client = InspectionClient(creds, transport=transport, language_code=args.language, timeout=args.timeout)
@@ -168,14 +184,18 @@ def cmd_inspect(args: argparse.Namespace, transport: Transport, stdin: TextIO, s
                 print(f"[{pos}/{total}] {record.url}  {state}", file=stderr)
 
         runner = Runner(client, store, prop, limiter, progress=progress)
-        run_id, outside = runner.plan(urls, resume=not args.new_run, label=args.label)
+        run_id, outside = runner.plan(urls, resume=not args.new_run, label=args.label, reuse_within=args.reuse_within)
         for u in outside:
             print(f"warning: skipped, not inside {prop}: {u}", file=stderr)
+        if runner.reused and not args.quiet:
+            print(f"Reused {runner.reused} result(s) inspected within --reuse-within; not inspected again", file=stderr)
         info = store.get_run(run_id)
         if info and info.done and not args.quiet:
             print(f"Resuming run {run_id}: {info.done}/{info.total} already inspected", file=stderr)
         try:
-            outcome = runner.run(run_id, max_requests=args.max_requests, retry_errors=args.retry_errors)
+            outcome = runner.run(
+                run_id, max_requests=args.max_requests, retry_errors=args.retry_errors, order=args.order
+            )
         except KeyboardInterrupt:
             store.set_status(run_id, "paused", "interrupted")
             print(f"\nInterrupted; resume with the same command (run {run_id}).", file=stderr)
@@ -356,6 +376,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--new-run", action="store_true", help="start a new run instead of resuming an unfinished one")
     p.add_argument("--retry-errors", action="store_true", help="inspect URLs that failed in this run again")
     p.add_argument("--max-requests", type=int, help="stop after inspecting this many URLs in this invocation")
+    p.add_argument(
+        "--reuse-within",
+        type=_parse_age_arg,
+        metavar="AGE",
+        help="copy results younger than AGE (30m, 12h, 7d, 2w) from earlier runs instead of inspecting again",
+    )
+    p.add_argument(
+        "--order",
+        choices=ORDERS,
+        default="source",
+        help="inspection order of pending URLs (default %(default)s); reports keep the source order",
+    )
     p.add_argument("--daily-limit", type=int, default=SITE_QPD, help="per-property daily budget (default %(default)s)")
     p.add_argument("--per-minute", type=int, default=SITE_QPM, help="per-property rate (default %(default)s/min)")
     p.add_argument("--language", help="BCP-47 language for issue messages, e.g. en-US (API default)")

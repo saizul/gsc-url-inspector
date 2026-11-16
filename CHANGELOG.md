@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `inspect --reuse-within AGE` (`30m`, `12h`, `7d`, `2w`): pending URLs whose last successful inspection in any
+  stored run of the property is younger than `AGE` get that result copied into the run instead of a new inspection,
+  so weekly full runs do not spend the daily budget on URLs checked a day ago. `--dry-run` reports how many results
+  would be reused.
+- `inspect --order source|stale-first|not-indexed-first` to inspect never-inspected, long-unchecked or problem URLs
+  first when the budget runs out before the run completes. Reports keep the source order.
+- `StateStore.url_history()`, `StateStore.carry_result()` and the `planning` module (`parse_age`, `split_fresh`,
+  `order_urls`, `UrlHistory`) for library use; `RunOutcome.reused`.
+
+### Changed
+
+- State database schema version 2: `results.carried_from` marks reused rows, plus an index on `results.url`. Version 1
+  databases are migrated in place when opened; 0.1.0 refuses to open a migrated database.
+
 ## [0.1.0] - 2026-11-14
 
 ### Added

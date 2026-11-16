@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 from .client import ApiError, InspectionClient, PermissionDenied, QuotaExceeded
 from .models import InspectionRecord, parse_inspection
+from .planning import order_urls, split_fresh
 from .property import Property
 from .quota import DailyQuotaExhausted, QuotaLimiter
 from .state import StateStore, utcnow
@@ -27,6 +29,7 @@ class RunOutcome:
     inspected: int = 0
     errors: int = 0
     pending: int = 0
+    reused: int = 0
     note: str | None = None
 
 
@@ -46,10 +49,23 @@ class Runner:
         self.limiter = limiter or QuotaLimiter(prop.site_url, store)
         self.max_consecutive_errors = max_consecutive_errors
         self.progress = progress
+        self.reused = 0
 
-    def plan(self, urls: Sequence[str], resume: bool = True, label: str | None = None) -> tuple[int, list[str]]:
+    def plan(
+        self,
+        urls: Sequence[str],
+        resume: bool = True,
+        label: str | None = None,
+        reuse_within: timedelta | None = None,
+        now: datetime | None = None,
+    ) -> tuple[int, list[str]]:
         """Return ``(run_id, outside_property_urls)``. With ``resume`` the latest unfinished run is continued
-        and any new URLs are appended to it."""
+        and any new URLs are appended to it.
+
+        With ``reuse_within``, every pending URL of the run whose last successful inspection (in any earlier run of
+        the property) is younger than that age gets the stored result copied into this run instead of being
+        inspected again. The number of copied results is kept in :attr:`reused`.
+        """
         inside = [u for u in urls if self.prop.contains(u)]
         outside = [u for u in urls if not self.prop.contains(u)]
         run_id = self.store.resumable_run(self.prop.site_url) if resume else None
@@ -57,11 +73,24 @@ class Runner:
             run_id = self.store.create_run(self.prop.site_url, inside, label)
         elif inside:
             self.store.add_urls(run_id, inside)
+        self.reused = 0
+        if reuse_within is not None:
+            history = self.store.url_history(self.prop.site_url, exclude_run=run_id)
+            _, fresh = split_fresh(self.store.pending_urls(run_id), history, reuse_within, now)
+            for url, entry in fresh.items():
+                if entry.last_ok_run_id is not None and self.store.carry_result(entry.last_ok_run_id, run_id, url):
+                    self.reused += 1
         return run_id, outside
 
-    def run(self, run_id: int, max_requests: int | None = None, retry_errors: bool = False) -> RunOutcome:
+    def run(
+        self, run_id: int, max_requests: int | None = None, retry_errors: bool = False, order: str = "source"
+    ) -> RunOutcome:
+        """Inspect the pending URLs of ``run_id``. ``order`` is one of :data:`~gsc_url_inspector.planning.ORDERS`
+        and only changes the inspection order; reports keep the source order."""
         pending = self.store.pending_urls(run_id, retry_errors=retry_errors)
-        outcome = RunOutcome(run_id, "running")
+        if order != "source":
+            pending = order_urls(pending, self.store.url_history(self.prop.site_url, exclude_run=run_id), order)
+        outcome = RunOutcome(run_id, "running", reused=self.reused)
         self.store.set_status(run_id, "running")
         total = len(pending)
         consecutive_errors = 0

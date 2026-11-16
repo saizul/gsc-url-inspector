@@ -12,6 +12,7 @@ from .auth import (
 from .client import INSPECT_ENDPOINT, ApiError, InspectionClient, PermissionDenied, QuotaExceeded
 from .diff import RunDiff, diff_records
 from .models import InspectionRecord, parse_inspection
+from .planning import ORDERS, UrlHistory, order_urls, parse_age, split_fresh
 from .property import Property, PropertyError
 from .quota import DailyQuotaExhausted, QuotaLimiter
 from .report import render, summarize
@@ -21,6 +22,7 @@ from .state import StateStore
 
 __all__ = [
     "INSPECT_ENDPOINT",
+    "ORDERS",
     "ApiError",
     "AuthError",
     "DailyQuotaExhausted",
@@ -40,11 +42,15 @@ __all__ = [
     "StateStore",
     "StaticTokenCredentials",
     "TokenCache",
+    "UrlHistory",
     "__version__",
     "collect_urls",
     "diff_records",
     "load_credentials",
+    "order_urls",
+    "parse_age",
     "parse_inspection",
     "render",
+    "split_fresh",
     "summarize",
 ]

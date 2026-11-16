@@ -55,6 +55,8 @@ jobs:
           gsc-url-inspector inspect --site https://www.example.com/ --sitemap examples/sitemap.xml --dry-run --db smoke.sqlite
           gsc-url-inspector inspect --site sc-domain:example.com -i examples/urls.csv -i examples/urls.txt --dry-run \
             --db smoke.sqlite
+          gsc-url-inspector inspect --site https://www.example.com/ --sitemap examples/sitemap.xml --dry-run \
+            --reuse-within 7d --order not-indexed-first --db smoke.sqlite
           # Inspecting without credentials must fail with the usage exit code (2).
           set +e
           gsc-url-inspector inspect --site https://www.example.com/ https://www.example.com/ --db smoke.sqlite
