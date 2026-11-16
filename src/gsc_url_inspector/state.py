@@ -16,11 +16,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .models import InspectionRecord, parse_inspection
+from .planning import UrlHistory
 
 __all__ = ["RUN_STATUSES", "RunInfo", "StateStore", "default_db_path", "utcnow"]
 
 RUN_STATUSES = ("running", "paused", "completed", "failed")
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -52,9 +53,11 @@ CREATE TABLE IF NOT EXISTS results (
     user_canonical TEXT,
     last_crawl_time TEXT,
     raw_json TEXT,
+    carried_from INTEGER,
     PRIMARY KEY (run_id, url)
 );
 CREATE INDEX IF NOT EXISTS idx_runs_site ON runs(site_url, id);
+CREATE INDEX IF NOT EXISTS idx_results_url ON results(url);
 CREATE TABLE IF NOT EXISTS quota_usage (
     site_url TEXT NOT NULL,
     day TEXT NOT NULL,
@@ -102,13 +105,29 @@ class StateStore:
         self.conn.execute("PRAGMA foreign_keys = ON")
         if self.path != ":memory:":
             self.conn.execute("PRAGMA journal_mode = WAL")
+        row = self._meta_version()
+        if row is not None and row > SCHEMA_VERSION:
+            self.conn.close()
+            raise RuntimeError(f"{self.path} was written by a newer version (schema {row})")
         self.conn.executescript(_SCHEMA)
-        row = self.conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
-        if row is None:
-            self.conn.execute("INSERT INTO meta VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
-        elif int(row["value"]) > SCHEMA_VERSION:
-            raise RuntimeError(f"{self.path} was written by a newer version (schema {row['value']})")
+        self._migrate()
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),)
+        )
         self.conn.commit()
+
+    def _meta_version(self) -> int | None:
+        exists = self.conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'").fetchone()
+        if not exists:
+            return None
+        row = self.conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+        return int(row["value"]) if row else None
+
+    def _migrate(self) -> None:
+        """Bring databases written by older versions up to the current schema."""
+        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(results)")}
+        if "carried_from" not in columns:  # schema 1 -> 2
+            self.conn.execute("ALTER TABLE results ADD COLUMN carried_from INTEGER")
 
     def close(self) -> None:
         self.conn.close()
@@ -259,6 +278,65 @@ class StateStore:
                 ),
             )
             c.execute("UPDATE runs SET updated_at = ? WHERE id = ?", (utcnow(), run_id))
+
+    def url_history(self, site_url: str, exclude_run: int | None = None) -> dict[str, UrlHistory]:
+        """The latest result and the latest successful result of every URL stored for ``site_url``.
+
+        Results copied from another run (``carried_from``) are skipped, so the history always points at the run
+        that really inspected the URL.
+        """
+        rows = self.conn.execute(
+            """SELECT s.url, s.run_id, s.inspected_at, s.error, s.verdict FROM results s
+               JOIN runs r ON r.id = s.run_id
+               WHERE r.site_url = ? AND s.run_id != ? AND s.carried_from IS NULL
+               ORDER BY s.inspected_at, s.run_id""",
+            (site_url, -1 if exclude_run is None else exclude_run),
+        )
+        latest: dict[str, sqlite3.Row] = {}
+        latest_ok: dict[str, sqlite3.Row] = {}
+        for row in rows:
+            latest[row["url"]] = row
+            if row["error"] is None:
+                latest_ok[row["url"]] = row
+        out: dict[str, UrlHistory] = {}
+        for url, row in latest.items():
+            ok = latest_ok.get(url)
+            out[url] = UrlHistory(
+                url=url,
+                last_run_id=int(row["run_id"]),
+                last_inspected_at=row["inspected_at"],
+                last_error=row["error"],
+                last_verdict=row["verdict"],
+                last_ok_run_id=int(ok["run_id"]) if ok is not None else None,
+                last_ok_at=ok["inspected_at"] if ok is not None else None,
+            )
+        return out
+
+    def carry_result(self, source_run: int, target_run: int, url: str) -> bool:
+        """Copy the stored result of ``url`` from ``source_run`` into ``target_run`` without a new inspection.
+
+        The copy keeps the original ``inspected_at`` and records ``carried_from``. An existing result in the target
+        run is never overwritten. Returns True when a row was copied.
+        """
+        with self._tx() as c:
+            cur = c.execute(
+                """INSERT OR IGNORE INTO results
+                   (run_id, url, inspected_at, error, verdict, coverage_state, indexing_state,
+                    google_canonical, user_canonical, last_crawl_time, raw_json, carried_from)
+                   SELECT ?, url, inspected_at, error, verdict, coverage_state, indexing_state,
+                          google_canonical, user_canonical, last_crawl_time, raw_json, run_id
+                   FROM results WHERE run_id = ? AND url = ? AND error IS NULL""",
+                (target_run, source_run, url),
+            )
+            if cur.rowcount > 0:
+                c.execute("UPDATE runs SET updated_at = ? WHERE id = ?", (utcnow(), target_run))
+            return cur.rowcount > 0
+
+    def carried_count(self, run_id: int) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) FROM results WHERE run_id = ? AND carried_from IS NOT NULL", (run_id,)
+        ).fetchone()
+        return int(row[0])
 
     def records(self, run_id: int) -> list[InspectionRecord]:
         run = self.get_run(run_id)
