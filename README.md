@@ -173,6 +173,9 @@ grep '/blog/' urls.txt | gsc-url-inspector inspect -s sc-domain:example.com
 # From sitemaps (indexes and .gz are followed)
 gsc-url-inspector inspect -s sc-domain:example.com --sitemap https://www.example.com/sitemap_index.xml
 
+# Only the blog, without tag archives and PDFs (regular expressions, applied before --limit)
+gsc-url-inspector inspect -s sc-domain:example.com --sitemap sitemap.xml --include '/blog/' --exclude '/tag/' --exclude '\.pdf$'
+
 # Check what would be inspected, without credentials or quota
 gsc-url-inspector inspect -s https://www.example.com/ --sitemap sitemap.xml --dry-run
 
@@ -195,6 +198,8 @@ Main `inspect` options:
 | `--input`, `-i` | URL file (repeatable); `-` reads stdin |
 | `--sitemap` | sitemap or sitemap index, URL or local path (repeatable) |
 | `--limit N` | only the first N URLs from the sources |
+| `--include REGEX` | only URLs matching the regular expression (repeatable; matching any one keeps the URL) |
+| `--exclude REGEX` | skip URLs matching the regular expression (repeatable) |
 | `--new-run` | start a new run even if an unfinished one exists |
 | `--retry-errors` | inspect URLs that failed in the current run again |
 | `--max-requests N` | stop after N URLs in this invocation (the run stays resumable) |
@@ -414,7 +419,7 @@ limiter, and a real loopback server for the OAuth redirect. They never contact G
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: see [SECURITY.md](SECURITY.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md). Security issues: see [SECURITY.md](SECURITY.md).
 
 ## License
 

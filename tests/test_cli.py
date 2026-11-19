@@ -94,6 +94,29 @@ def test_inspect_from_sitemap_and_dry_run(transport, tmp_path):
     assert not transport.calls("POST", INSPECT_ENDPOINT)
 
 
+def test_inspect_include_exclude_dry_run(transport, tmp_path):
+    urls = "https://www.example.com/blog/a\nhttps://www.example.com/blog/tag/x\nhttps://www.example.com/shop\n"
+    r = cli(
+        transport,
+        "inspect",
+        "-s",
+        SITE,
+        "--db",
+        str(tmp_path / "f.sqlite"),
+        "--include",
+        "/blog/",
+        "--exclude",
+        "/tag/",
+        "--dry-run",
+        stdin=urls,
+    )
+    assert r.code == EXIT_OK
+    assert r.out == "https://www.example.com/blog/a\n"
+    assert "2 URL(s) skipped by --include/--exclude patterns" in r.err
+    bad = cli(transport, "inspect", "-s", SITE, "--db", str(tmp_path / "f.sqlite"), "--include", "(", "--dry-run")
+    assert bad.code == EXIT_USAGE
+
+
 def test_pause_resume_and_diff_with_fail_on(transport, tmp_path):
     db = str(tmp_path / "s.sqlite")
     api = InspectApi(transport, {u: index_result() for u in URLS})

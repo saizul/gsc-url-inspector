@@ -12,6 +12,7 @@ from gsc_url_inspector.sources import (
     SitemapReader,
     collect_urls,
     dedupe,
+    filter_urls,
     read_url_file,
     read_url_lines,
 )
@@ -203,3 +204,31 @@ def test_collect_urls_dash_reads_stdin_and_limit():
     urls, warnings = collect_urls(files=["-"], stdin=io.StringIO("https://a.example/\nhttps://b.example/\n"), limit=1)
     assert urls == ["https://a.example/"]
     assert "only the first 1" in warnings[0]
+
+
+def test_filter_urls_include_and_exclude():
+    urls = [
+        "https://www.example.com/",
+        "https://www.example.com/blog/a",
+        "https://www.example.com/blog/b.pdf",
+        "https://www.example.com/shop/c",
+    ]
+    assert filter_urls(urls) == (urls, 0)
+    assert filter_urls(urls, include=["/blog/"]) == (urls[1:3], 2)
+    assert filter_urls(urls, include=["/blog/", "/shop/"], exclude=[r"\.pdf$"]) == (
+        ["https://www.example.com/blog/a", "https://www.example.com/shop/c"],
+        2,
+    )
+    assert filter_urls(urls, exclude=["example"]) == ([], 4)
+    with pytest.raises(ValueError, match="invalid pattern"):
+        filter_urls(urls, include=["(unclosed"])
+
+
+def test_collect_urls_filters_before_limit():
+    stdin = io.StringIO("https://a.example/x\nhttps://a.example/blog/1\nhttps://a.example/blog/2\n")
+    urls, warnings = collect_urls(stdin=stdin, include=["/blog/"], limit=1)
+    assert urls == ["https://a.example/blog/1"]
+    assert warnings == [
+        "1 URL(s) skipped by --include/--exclude patterns",
+        "2 URLs found; only the first 1 will be inspected",
+    ]

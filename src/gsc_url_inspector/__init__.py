@@ -17,7 +17,7 @@ from .property import Property, PropertyError
 from .quota import DailyQuotaExhausted, QuotaLimiter
 from .report import render, summarize
 from .runner import Runner, RunOutcome
-from .sources import SitemapReader, collect_urls
+from .sources import SitemapReader, collect_urls, filter_urls
 from .state import StateStore
 
 __all__ = [
@@ -46,6 +46,7 @@ __all__ = [
     "__version__",
     "collect_urls",
     "diff_records",
+    "filter_urls",
     "load_credentials",
     "order_urls",
     "parse_age",
