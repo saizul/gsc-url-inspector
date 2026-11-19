@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `inspect --include REGEX` and `--exclude REGEX` (both repeatable) to inspect one section of a site, such as
+  `/blog/` without tag archives, from a full sitemap. Patterns are searched anywhere in the URL, are applied after
+  de-duplication and before `--limit`, and the number of skipped URLs is reported. An invalid pattern is a usage
+  error (exit 2). Library: `filter_urls()` and the `include`/`exclude` arguments of `collect_urls()`.
+- A code of conduct, issue forms and a pull request template.
 - `inspect --reuse-within AGE` (`30m`, `12h`, `7d`, `2w`): pending URLs whose last successful inspection in any
   stored run of the property is younger than `AGE` get that result copied into the run instead of a new inspection,
   so weekly full runs do not spend the daily budget on URLs checked a day ago. `--dry-run` reports how many results

@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import gzip
 import io
+import re
 import sys
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable, Iterator
@@ -18,7 +19,9 @@ __all__ = [
     "SitemapError",
     "SitemapReader",
     "collect_urls",
+    "compile_patterns",
     "dedupe",
+    "filter_urls",
     "read_url_file",
     "read_url_lines",
 ]
@@ -161,6 +164,42 @@ def dedupe(urls: Iterable[str]) -> list[str]:
     return out
 
 
+def compile_patterns(patterns: Iterable[str | re.Pattern[str]]) -> list[re.Pattern[str]]:
+    """Compile regular expressions; raises ``ValueError`` naming the bad pattern."""
+    compiled: list[re.Pattern[str]] = []
+    for pattern in patterns:
+        if isinstance(pattern, re.Pattern):
+            compiled.append(pattern)
+            continue
+        try:
+            compiled.append(re.compile(pattern))
+        except re.error as exc:
+            raise ValueError(f"invalid pattern {pattern!r}: {exc}") from exc
+    return compiled
+
+
+def filter_urls(
+    urls: Iterable[str],
+    include: Iterable[str | re.Pattern[str]] = (),
+    exclude: Iterable[str | re.Pattern[str]] = (),
+) -> tuple[list[str], int]:
+    """Keep URLs that match any ``include`` pattern (all, when there is none) and no ``exclude`` pattern.
+
+    Patterns are regular expressions searched anywhere in the URL, so ``/blog/`` matches every blog URL and
+    ``\\.pdf$`` matches PDF files. Returns ``(kept, dropped_count)``.
+    """
+    inc = compile_patterns(include)
+    exc = compile_patterns(exclude)
+    kept: list[str] = []
+    dropped = 0
+    for url in urls:
+        if (inc and not any(p.search(url) for p in inc)) or any(p.search(url) for p in exc):
+            dropped += 1
+            continue
+        kept.append(url)
+    return kept, dropped
+
+
 def collect_urls(
     files: Iterable[str | Path] = (),
     sitemaps: Iterable[str] = (),
@@ -168,8 +207,13 @@ def collect_urls(
     stdin: TextIO | None = None,
     reader: SitemapReader | None = None,
     limit: int | None = None,
+    include: Iterable[str | re.Pattern[str]] = (),
+    exclude: Iterable[str | re.Pattern[str]] = (),
 ) -> tuple[list[str], list[str]]:
-    """Gather URLs from every source, in order, de-duplicated. Returns ``(urls, warnings)``."""
+    """Gather URLs from every source, in order, de-duplicated and filtered. Returns ``(urls, warnings)``.
+
+    ``include``/``exclude`` patterns (see :func:`filter_urls`) are applied before ``limit``.
+    """
     gathered: list[str] = list(urls)
     warnings: list[str] = []
     for f in files:
@@ -186,6 +230,11 @@ def collect_urls(
             gathered.extend(reader.read(sm))
         warnings.extend(reader.errors)
     result = dedupe(gathered)
+    include, exclude = list(include), list(exclude)
+    if include or exclude:
+        result, dropped = filter_urls(result, include, exclude)
+        if dropped:
+            warnings.append(f"{dropped} URL(s) skipped by --include/--exclude patterns")
     if limit is not None and len(result) > limit:
         warnings.append(f"{len(result)} URLs found; only the first {limit} will be inspected")
         result = result[:limit]

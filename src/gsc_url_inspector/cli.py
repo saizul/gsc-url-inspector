@@ -27,7 +27,7 @@ from .property import Property, PropertyError
 from .quota import SITE_QPD, SITE_QPM, QuotaLimiter, next_reset
 from .report import EXTENSIONS, FORMATS, render
 from .runner import Runner
-from .sources import SitemapReader, collect_urls
+from .sources import SitemapReader, collect_urls, compile_patterns
 from .state import StateStore, default_db_path
 
 __all__ = ["EXIT_FAIL_ON", "EXIT_FAILED", "EXIT_OK", "EXIT_PAUSED", "EXIT_USAGE", "build_parser", "main"]
@@ -131,6 +131,13 @@ def _parse_age_arg(value: str):  # type: ignore[no-untyped-def]
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
+def _parse_pattern_arg(value: str):  # type: ignore[no-untyped-def]
+    try:
+        return compile_patterns([value])[0]
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def _parse_fail_on(value: str) -> list[str]:
     items = [v.strip() for v in value.split(",") if v.strip()]
     for item in items:
@@ -153,6 +160,8 @@ def cmd_inspect(args: argparse.Namespace, transport: Transport, stdin: TextIO, s
         stdin=stdin if (read_stdin or "-" in files) else None,
         reader=SitemapReader(transport=transport),
         limit=args.limit,
+        include=args.include or [],
+        exclude=args.exclude or [],
     )
     for w in warnings:
         print(f"warning: {w}", file=stderr)
@@ -373,6 +382,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--input", "-i", action="append", help="file with one URL per line or a CSV; '-' for stdin")
     p.add_argument("--sitemap", action="append", help="sitemap or sitemap index URL or path (repeatable)")
     p.add_argument("--limit", type=int, help="inspect at most this many URLs from the sources")
+    p.add_argument(
+        "--include",
+        action="append",
+        type=_parse_pattern_arg,
+        metavar="REGEX",
+        help="only inspect URLs matching this regular expression (repeatable; any match keeps the URL)",
+    )
+    p.add_argument(
+        "--exclude",
+        action="append",
+        type=_parse_pattern_arg,
+        metavar="REGEX",
+        help="skip URLs matching this regular expression (repeatable; applied after --include)",
+    )
     p.add_argument("--new-run", action="store_true", help="start a new run instead of resuming an unfinished one")
     p.add_argument("--retry-errors", action="store_true", help="inspect URLs that failed in this run again")
     p.add_argument("--max-requests", type=int, help="stop after inspecting this many URLs in this invocation")
